@@ -1,0 +1,129 @@
+#Model development and validation for Lauren classfication 
+#1. load library ####
+library(dplyr)
+library(readxl)
+library(na.tools)
+library(caret)
+library(openxlsx)
+library("glmnet")
+library(pROC)
+library(Matrix)
+library(randomForestSRC)
+library(givitiR)
+library(pROC)
+library(rmda)
+library(grid)
+library(lattice)
+library(Formula) 
+library(ggplot2) 
+library(Hmisc)
+library(rms)
+library(MASS)
+rm(list = ls())
+#2. Read Radiomic Data####
+# Load Radiomic Data
+develop <- read.csv("radiomic_data.csv")
+
+#3. DATA Tidying####
+# Data Tidying based on CustomLabel
+radiomics_end_index <- length(develop)
+radiomics_full <- develop
+Feature_full<-develop[4:length(develop)]#read the radiomic feature
+
+#4. Extract Features####
+
+
+Features_develop <- Feature_full[1:length(Feature_full)]
+Labels <- as.factor(radiomics_full$Label)
+id_d<-develop$PatientID
+
+
+data_Develop_ori <- cbind(Labels, Features_develop)
+data_Develop_ori_full <- cbind(id_d,Labels, Features_develop)
+
+
+total_deve_id<-data.frame(unique(data_Develop_ori_full$id_d))
+sized1= round(0.7*length(total_deve_id[,1]))
+sized2=length(total_deve_id[,1])-sized1
+
+#5. Boruta+RandomForest####
+library(caret)
+library(openxlsx)
+library("glmnet")
+library(pROC)
+
+library(Matrix)
+library(dplyr)
+
+set.seed(2)
+train_split_id<-sample(total_deve_id[,1], sized1, replace = FALSE, prob = NULL)
+train_split_id
+train_full<-data_Develop_ori_full[which(data_Develop_ori_full$id_d %in% train_split_id),]
+train_feature<-train_full[5:length(train_full)]
+y_train <- as.numeric(train_full$Labels)
+y_train <- train_full$Labels
+train_feature_full<-cbind(y_train,train_feature)
+test_full<-data_Develop_ori_full[-which(data_Develop_ori_full$id_d %in% train_split_id),]
+test_feature<-test_full[5:length(test_full)]
+y_test <- as.numeric(test_full$Labels)
+y_test <- test_full$Labels
+test_feature_full<-cbind(y_test,test_feature)
+
+library(randomForestSRC)
+
+
+set.seed(4)
+rf <- rfsrc(y_train~., data =train_feature_full, ntree=4, nodesize =10,nodedepth = 3,importance  = TRUE)
+train_class <- predict.rfsrc(rf,train_feature_full)$predicted[,1]
+
+Train_roc_data <- data.frame(y_train,train_class)
+train_result <- roc(Train_roc_data[,1], Train_roc_data[,2])$auc
+test_class <- predict.rfsrc(rf,test_feature_full)$predicted[,1]
+Test_roc_data <- data.frame(y_test,test_class)
+test_result <- roc(Test_roc_data[,1], Test_roc_data[,2])$auc
+
+
+summary <- data.frame(train_result,test_result)
+bestparam <- summary %>% filter(train_result > 0.8)%>%filter(test_result > 0.8)%>%filter(train_result-test_result < 0.05) 
+bestparam[dim(bestparam)[1],] -> bestparam
+mean(summary$test_result)
+bestparam
+#6.Apply####
+
+Train_roc_data <- data.frame(y_train,train_class)
+Test_roc_data <- data.frame(y_test,test_class)
+rf$predicted
+
+library(ggRandomForests)
+gg0 <- gg_vimp(rf)
+gg<-gg0[gg0$vimp!=0,]
+gg<-gg[gg$set=="all",]
+plot(gg)
+
+gg$abs<-abs(gg$vimp)
+order_gg0<-arrange(gg,-abs)
+top<-order_gg0
+top
+
+library("pROC")
+Train_roc_data <- data.frame(y_train,train_class)
+names(Train_roc_data)<- c("y_train", "rfsrc_pred")
+rocobj_train <-roc(Train_roc_data$y_train, Train_roc_data$rfsrc_pred)
+print("Training Dataset")
+rocobj_train$auc
+
+ci.auc(rocobj_train)##CI
+roc_summary_train <-coords (rocobj_train,"best", ret=c ("threshold",  "specificity",  "sensitivity",  "accuracy","precision","recall","ppv","npv"),transpose = TRUE)
+roc_summary_train 
+
+library("pROC")
+Test_roc_data <- data.frame(y_test,test_class)
+names(Test_roc_data)<- c("y_test", "rfsrc_pred_test")
+rocobj_test <- roc(Test_roc_data$y_test, Test_roc_data$rfsrc_pred_test)
+print("Testing Dataset")
+rocobj_test$auc
+ci.auc (rocobj_test)##CI
+roc_summary_test<-coords (rocobj_test,roc_summary_train[1], ret=c ("threshold",  "specificity",  "sensitivity",  "accuracy","precision","recall","ppv","npv"),transpose = TRUE)
+roc_summary_test
+plot.roc(rocobj_train,main = "ROC Curve(RF)",col="cadetblue4",print.auc = TRUE ,print.thres=FALSE,print.auc.x=0.3,print.auc.y=0.3)
+plot.roc(rocobj_test,add=TRUE,col="coral2",print.auc=TRUE,print.thres=FALSE,print.auc.x=0.3,print.auc.y=0.2)
